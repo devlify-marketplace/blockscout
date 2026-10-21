@@ -6,6 +6,7 @@ defmodule Explorer.Chain.LogTest do
 
   alias Ecto.Changeset
   alias Explorer.Chain.{Log, SmartContract}
+  alias Explorer.Utility.LogFirstTopic
 
   @first_topic_hex_string_1 "0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65"
 
@@ -39,25 +40,20 @@ defmodule Explorer.Chain.LogTest do
     end
 
     test "accepts optional attributes" do
-      params =
-        params_for(
-          :log,
-          address_hash: build(:address).hash,
-          first_topic: @first_topic_hex_string_1,
-          transaction_hash: build(:transaction).hash,
-          block_hash: build(:block).hash
-        )
+      %LogFirstTopic{id: first_topic_id} = LogFirstTopic.find_or_create(topic(@first_topic_hex_string_1))
+
+      params = Map.put(params_for(:log, address_hash: build(:address).hash), :first_topic_id, first_topic_id)
 
       result = Log.changeset(%Log{}, params)
 
       assert result.valid? == true
-      assert result.changes.first_topic == topic(@first_topic_hex_string_1)
+      assert result.changes.first_topic_id == first_topic_id
     end
 
     test "assigns optional attributes" do
-      params = Map.put(params_for(:log), :first_topic, topic(@first_topic_hex_string_1))
+      params = Map.put(params_for(:log), :second_topic, topic(@first_topic_hex_string_1))
       changeset = Log.changeset(%Log{}, params)
-      assert changeset.changes.first_topic === topic(@first_topic_hex_string_1)
+      assert changeset.changes.second_topic === topic(@first_topic_hex_string_1)
     end
   end
 
