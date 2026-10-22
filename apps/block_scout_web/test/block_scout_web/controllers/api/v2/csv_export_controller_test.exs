@@ -477,6 +477,129 @@ defmodule BlockScoutWeb.Api.V2.CsvExportControllerTest do
       assert conn.status == 200
       assert conn.resp_body |> String.split("\n") |> Enum.count() == 5
     end
+
+    test "include_zero_value=false excludes zero-value calls but retains other internal transaction types", %{
+      conn: conn
+    } do
+      address = insert(:address)
+
+      zero_call_transaction = insert(:transaction) |> with_block()
+      nonzero_call_transaction = insert(:transaction) |> with_block()
+      create_transaction = insert(:transaction) |> with_block()
+      selfdestruct_transaction = insert(:transaction) |> with_block()
+
+      zero_call =
+        insert(:internal_transaction,
+          index: 1,
+          transaction: zero_call_transaction,
+          from_address: address,
+          block_number: zero_call_transaction.block_number,
+          transaction_index: zero_call_transaction.index,
+          value: Decimal.new(0)
+        )
+
+      nonzero_call =
+        insert(:internal_transaction,
+          index: 1,
+          transaction: nonzero_call_transaction,
+          from_address: address,
+          block_number: nonzero_call_transaction.block_number,
+          transaction_index: nonzero_call_transaction.index,
+          value: Decimal.new(1)
+        )
+
+      create =
+        insert(:internal_transaction_create,
+          index: 0,
+          transaction: create_transaction,
+          created_contract_address: address,
+          block_number: create_transaction.block_number,
+          transaction_index: create_transaction.index,
+          value: Decimal.new(0)
+        )
+
+      selfdestruct =
+        insert(:internal_transaction_selfdestruct,
+          index: 0,
+          transaction: selfdestruct_transaction,
+          from_address: address,
+          block_number: selfdestruct_transaction.block_number,
+          transaction_index: selfdestruct_transaction.index,
+          value: Decimal.new(0)
+        )
+
+      {:ok, now} = DateTime.now("Etc/UTC")
+
+      conn =
+        get(conn, "/api/v2/addresses/#{Address.checksum(address.hash)}/internal-transactions/csv", %{
+          "from_period" => DateTime.add(now, -1, :day) |> DateTime.to_iso8601(),
+          "to_period" => DateTime.to_iso8601(now),
+          "include_zero_value" => "false"
+        })
+
+      assert conn.status == 200
+      refute conn.resp_body =~ to_string(zero_call.transaction_hash)
+      assert conn.resp_body =~ to_string(nonzero_call.transaction_hash)
+      assert conn.resp_body =~ to_string(create.transaction_hash)
+      assert conn.resp_body =~ to_string(selfdestruct.transaction_hash)
+    end
+
+    test "zero-value calls remain included by default and when include_zero_value=true", %{
+      conn: conn,
+      v2_secret_key: recaptcha_secret_key
+    } do
+      address = insert(:address)
+      transaction = insert(:transaction) |> with_block()
+
+      internal_transaction =
+        insert(:internal_transaction,
+          index: 1,
+          transaction: transaction,
+          from_address: address,
+          block_number: transaction.block_number,
+          transaction_index: transaction.index,
+          value: Decimal.new(0)
+        )
+
+      {:ok, now} = DateTime.now("Etc/UTC")
+
+      params = %{
+        "from_period" => DateTime.add(now, -1, :day) |> DateTime.to_iso8601(),
+        "to_period" => DateTime.to_iso8601(now)
+      }
+
+      path = "/api/v2/addresses/#{Address.checksum(address.hash)}/internal-transactions/csv"
+
+      conn = get(conn, path, params)
+      assert conn.status == 200
+      assert conn.resp_body =~ to_string(internal_transaction.transaction_hash)
+
+      expected_body = "secret=#{recaptcha_secret_key}&response=123"
+
+      Tesla.Test.expect_tesla_call(
+        times: 1,
+        returns: fn %{body: ^expected_body}, _opts ->
+          {:ok,
+           %Tesla.Env{
+             status: 200,
+             body:
+               Utils.JSON.encode!(%{
+                 "success" => true,
+                 "hostname" => Application.get_env(:block_scout_web, BlockScoutWeb.Endpoint)[:url][:host]
+               })
+           }}
+        end
+      )
+
+      conn =
+        Phoenix.ConnTest.build_conn()
+        |> put_req_header("recaptcha-v2-response", "123")
+        |> put_req_header("user-agent", "test-agent")
+        |> get(path, Map.put(params, "include_zero_value", "true"))
+
+      assert conn.status == 200
+      assert conn.resp_body =~ to_string(internal_transaction.transaction_hash)
+    end
   end
 
   describe "GET /api/v2/csv-exports/:uuid" do
@@ -722,6 +845,35 @@ defmodule BlockScoutWeb.Api.V2.CsvExportControllerTest do
 
       assert %{"request_id" => request_id} = json_response(conn, 202)
       assert is_binary(request_id)
+    end
+
+    test "queues internal-transactions export with include_zero_value=false", %{conn: conn} do
+      address = insert(:address)
+      transaction = :transaction |> insert() |> with_block()
+
+      insert(:internal_transaction,
+        index: 0,
+        transaction: transaction,
+        from_address: address,
+        block_number: transaction.block_number,
+        transaction_index: transaction.index
+      )
+
+      {:ok, now} = DateTime.now("Etc/UTC")
+
+      conn =
+        get(conn, "/api/v2/addresses/#{Address.checksum(address.hash)}/internal-transactions/csv", %{
+          "from_period" => DateTime.add(now, -1, :day) |> DateTime.to_iso8601(),
+          "to_period" => DateTime.to_iso8601(now),
+          "include_zero_value" => "false"
+        })
+
+      assert %{"request_id" => request_id} = json_response(conn, 202)
+
+      assert_enqueued(
+        worker: Explorer.Chain.CsvExport.Worker,
+        args: %{"request_id" => request_id, "include_zero_value" => false}
+      )
     end
 
     test "returns 202 with request_id for logs export when async enabled", %{conn: conn} do

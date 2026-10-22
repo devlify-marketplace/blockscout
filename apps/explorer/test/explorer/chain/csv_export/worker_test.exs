@@ -1,4 +1,11 @@
 # SPDX-License-Identifier: LicenseRef-Blockscout
+defmodule Explorer.Chain.CsvExport.WorkerTestExporter do
+  def export(_address_hash, _from_period, _to_period, options, _filter_type, _filter_value) do
+    send(Process.get(:worker_test_pid), {:export_options, options})
+    raise "stop after capturing exporter options"
+  end
+end
+
 defmodule Explorer.Chain.CsvExport.WorkerTest do
   use Explorer.DataCase, async: false
   use Oban.Testing, repo: Explorer.Repo
@@ -98,6 +105,49 @@ defmodule Explorer.Chain.CsvExport.WorkerTest do
       assert updated.status == :completed
       assert updated.file_id == "test-file-id"
       assert updated.expires_at == date_time_to_expect
+    end
+  end
+
+  describe "perform/1 option forwarding" do
+    test "forwards include_zero_value=false and defaults old jobs to true" do
+      address = insert(:address)
+      Process.put(:worker_test_pid, self())
+
+      for {extra_args, expected} <- [{%{"include_zero_value" => false}, false}, {%{}, true}] do
+        request_args = %{
+          address_hash: to_string(address.hash),
+          from_period: DateTime.utc_now() |> DateTime.to_iso8601(),
+          to_period: DateTime.utc_now() |> DateTime.to_iso8601(),
+          show_scam_tokens?: nil,
+          module: "Elixir.Explorer.Chain.CsvExport.WorkerTestExporter",
+          filter_type: nil,
+          filter_value: nil
+        }
+
+        {:ok, request} = Request.create("127.0.0.1", request_args)
+
+        job_args =
+          %{
+            "request_id" => request.id,
+            "address_hash" => request_args.address_hash,
+            "from_period" => request_args.from_period,
+            "to_period" => request_args.to_period,
+            "show_scam_tokens?" => nil,
+            "module" => request_args.module,
+            "filter_type" => nil,
+            "filter_value" => nil
+          }
+          |> Map.merge(extra_args)
+
+        assert_raise RuntimeError, "stop after capturing exporter options", fn ->
+          perform_job(Worker, job_args)
+        end
+
+        assert_receive {:export_options, options}
+        assert Keyword.fetch!(options, :include_zero_value) == expected
+      end
+    after
+      Process.delete(:worker_test_pid)
     end
   end
 
