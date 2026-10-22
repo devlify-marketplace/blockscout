@@ -538,10 +538,10 @@ defmodule BlockScoutWeb.Api.V2.CsvExportControllerTest do
         })
 
       assert conn.status == 200
-      refute conn.resp_body =~ to_string(zero_call.transaction_hash)
-      assert conn.resp_body =~ to_string(nonzero_call.transaction_hash)
-      assert conn.resp_body =~ to_string(create.transaction_hash)
-      assert conn.resp_body =~ to_string(selfdestruct.transaction_hash)
+      refute conn.resp_body =~ to_string(zero_call.transaction.hash)
+      assert conn.resp_body =~ to_string(nonzero_call.transaction.hash)
+      assert conn.resp_body =~ to_string(create.transaction.hash)
+      assert conn.resp_body =~ to_string(selfdestruct.transaction.hash)
     end
 
     test "zero-value calls remain included by default and when include_zero_value=true", %{
@@ -572,7 +572,7 @@ defmodule BlockScoutWeb.Api.V2.CsvExportControllerTest do
 
       conn = get(conn, path, params)
       assert conn.status == 200
-      assert conn.resp_body =~ to_string(internal_transaction.transaction_hash)
+      assert conn.resp_body =~ to_string(internal_transaction.transaction.hash)
 
       expected_body = "secret=#{recaptcha_secret_key}&response=123"
 
@@ -598,7 +598,7 @@ defmodule BlockScoutWeb.Api.V2.CsvExportControllerTest do
         |> get(path, Map.put(params, "include_zero_value", "true"))
 
       assert conn.status == 200
-      assert conn.resp_body =~ to_string(internal_transaction.transaction_hash)
+      assert conn.resp_body =~ to_string(internal_transaction.transaction.hash)
     end
   end
 

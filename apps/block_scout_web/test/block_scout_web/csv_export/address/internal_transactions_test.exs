@@ -126,6 +126,51 @@ defmodule BlockScoutWeb.CsvExport.Address.InternalTransactionsTest do
                )
     end
 
+    test "applies include_zero_value while preserving the default" do
+      address = insert(:address)
+      other_address = insert(:address)
+
+      internal_transactions =
+        for {from_address, to_address, value} <- [
+              {address, other_address, 0},
+              {address, other_address, 1},
+              {other_address, address, 1}
+            ] do
+          transaction = :transaction |> insert() |> with_block()
+
+          insert(:internal_transaction,
+            index: 1,
+            transaction: transaction,
+            from_address: from_address,
+            to_address: to_address,
+            block_number: transaction.block_number,
+            transaction_index: transaction.index,
+            value: Decimal.new(value)
+          )
+        end
+
+      [zero_call, outgoing_call, incoming_call] = internal_transactions
+      now = DateTime.utc_now()
+      from_period = now |> DateTime.add(-1, :minute) |> DateTime.to_iso8601()
+      to_period = DateTime.to_iso8601(now)
+
+      for {options, expected} <- [
+            {[], internal_transactions},
+            {[include_zero_value: true], internal_transactions},
+            {[include_zero_value: false], [outgoing_call, incoming_call]}
+          ] do
+        csv =
+          address.hash
+          |> AddressInternalTransactionsCsvExporter.export(from_period, to_period, options, nil, nil)
+          |> Enum.to_list()
+          |> IO.iodata_to_binary()
+
+        for internal_transaction <- [zero_call, outgoing_call, incoming_call] do
+          assert csv =~ to_string(internal_transaction.transaction.hash) == internal_transaction in expected
+        end
+      end
+    end
+
     test "fetches all internal transactions" do
       address = insert(:address)
 
