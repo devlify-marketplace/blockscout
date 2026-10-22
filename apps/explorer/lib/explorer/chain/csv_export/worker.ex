@@ -59,7 +59,7 @@ defmodule Explorer.Chain.CsvExport.Worker do
       |> csv_export_module.export(
         from_period,
         to_period,
-        [show_scam_tokens?: show_scam_tokens?],
+        [show_scam_tokens?: show_scam_tokens?, include_zero_value: Map.get(args, "include_zero_value", true)],
         args["filter_type"],
         args["filter_value"]
       )
